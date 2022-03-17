@@ -45,9 +45,7 @@ library(viridis)
 library(PerformanceAnalytics)
 library(tseries)
 library(MLmetrics)
-#library(fastDummies)
 # Functions ---------------------------------------------------------------
-
 mape <- function(actual,pred){
   mape <- mean(abs((actual - pred)/actual))*100
   return (mape)
