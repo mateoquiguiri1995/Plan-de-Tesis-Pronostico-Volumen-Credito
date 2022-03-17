@@ -1,7 +1,7 @@
 ---
 title: "Proyecto de Titulación"
 author: "Mateo Quiguiri"
-date: "3/07/2022"
+date: "Sys.Date()"
 output:
   rmdformats::downcute:
     lightbox: true
@@ -13,34 +13,33 @@ knitr::opts_chunk$set(echo = FALSE)
 ```
 
 ```{r , include=FALSE}
-library(table1)
-library(kableExtra) # beautiful Tables
-library(Ckmeans.1d.dp)
-library(xgboost)
-library(randomForest)
-library(lmtest)
 #if (!require(randomForest)) install.packages('randomForest')
-#if (!require(interactions)) install.packages('interactions')
-library(interactions) #Graphing OLS Results
+library(table1) #Summary statistics
+library(kableExtra) # beautiful Tables
+#library(Ckmeans.1d.dp)
+library(xgboost) 
+library(randomForest)
+library(lmtest) #diagnostic checking in linear regression models
+#library(interactions) #Graphing OLS Results
 library(jtools) #OLS Results table
 library(tidyverse) 
 library(readxl)#Tidy 
-library(janitor)
-library(lubridate)
-library(hrbrthemes)
-library(skimr)
+library(janitor) #clean_names
+library(lubridate) # time data
+library(hrbrthemes) # color extra 'ggplot2' themes
+#library(skimr) # Summary
 library(readxl)
-library(gridExtra)
-library(grid)
-library(lattice)
-library(forecast)
+library(gridExtra) #grid plots
+library(grid) # plots
+library(lattice) # plots
+library(forecast) 
 library(xgboost)
-library(caret)
-library(car)
-library(mice)
-library(VIM)
+library(caret) #predictive models
+library(car) 
+library(mice) #data imputatation
+#library(VIM) #Missin Values
 library(ggcorrplot)
-library(RColorBrewer)
+#library(RColorBrewer)
 library(viridis) 
 library(PerformanceAnalytics)
 library(tseries)
@@ -87,17 +86,18 @@ Periodo de estudio: **Octubre de 2010 a Septiembre de 2021**
 
 ```{r,include=FALSE}
 base_proyecto <- read_excel("base_proyecto.xlsx",sheet = "Hoja2")
-base_proyecto<-rename(base_proyecto, fecha=Mes)
-base_proyecto<-clean_names(base_proyecto)
+base_proyecto <- rename(base_proyecto, fecha = Mes)
+base_proyecto <- clean_names(base_proyecto)
 
 # Data Transformation -----------------------------------------------
-base_proyecto<-base_proyecto%>% mutate(fecha=ymd(fecha),credito_total=credito_total/1000000) %>% 
+base_proyecto <- base_proyecto%>% 
+  mutate(fecha=ymd(fecha),credito_total=credito_total/1000000) %>% 
   select(-c(n_operaciones,credito_total_miles)) 
 # * Imputacion CART----
-base_proyecto_imp<-mice(base_proyecto, m=3, maxit = 50, method = 'cart', seed = 500)
-base_proyecto<-complete(base_proyecto_imp,1)
+base_proyecto_imp <- mice(base_proyecto, m=3, maxit = 50, method = 'cart', seed = 500)
+base_proyecto <- complete(base_proyecto_imp,1)
 # Serie para modelo SARIMA
-credito_total<-ts(base_proyecto$credito_total, frequency = 12, start = c(2010,10))
+credito_total <- ts(base_proyecto$credito_total, frequency = 12, start = c(2010,10))
 # Base original para ARIMAX
 base_proyecto_o <- base_proyecto
 ts_base_proyecto_o <- ts(base_proyecto_o[,-1], frequency=12, start = c(2010,10))
@@ -145,26 +145,25 @@ head(base_proyecto,10) %>%
 
 Para evitar un análisis sesgado en el análisis posterior, todas las variables se han normalizado, restando la media y dividiendo para la desviación estandar.  
 
+
+```{r, include=FALSE}
+base_proyecto_s <- scale(base_proyecto[,-1]) #matriz para escalar
+sd <- attr(base_proyecto_s,'scaled:scale')
+media <- attr(base_proyecto_s,'scaled:center')
+base_proyecto_s <- as.data.frame(base_proyecto_s)
+base_proyecto <- base_proyecto_s %>% mutate(fecha=ymd(base_proyecto$fecha))
+split_factor <- floor((nrow(base_proyecto)/20)*19)         #define % of training and test set
+ts_base_proyecto <- ts(base_proyecto[,-10], frequency = 12, start = c(2010,10))
+```
+
+
 ## Estadística Descriptiva:
 
 ```{r,fig.align='center'}
 #my_skim <- skim_with(numeric=sfl(hist=NULL))
 #my_skim(base_proyecto) # Summary #OCULTAR
 #skim(base_proyecto)
-table1::table1(~., data = base_proyecto[,-1])
-```
-
-
-
-```{r, include=FALSE}
-base_proyecto_s<-scale(base_proyecto[,-1])
-sd<-attr(base_proyecto_s,'scaled:scale')
-media<-attr(base_proyecto_s,'scaled:center')
-base_proyecto_s<-as.data.frame(base_proyecto_s)
-base_proyecto<-base_proyecto_s %>% mutate(fecha=ymd(base_proyecto$fecha))
-split_factor <- floor((nrow(base_proyecto)/20)*19)         #define % of training and test set
-ts_base_proyecto <- ts(base_proyecto[,-10], frequency=12, start = c(2010,10))
-credito_total_n <- ts_base_proyecto[,1]
+table1::table1(~., data = base_proyecto_o[,-1])
 ```
 
 
@@ -173,7 +172,7 @@ credito_total_n <- ts_base_proyecto[,1]
 La correlación es un indicador importante para determinar el grado en el cual una variable se mueve en relación a otra, pero también puede ser un indicador de multicolinealidad. No obstante, dado que el objetivo del estudio, es la predicción, los resultados de los modelos paramétricos (ARIMA y ARIMAX) se enfocarán en el ajuste del modelo y la predicción, dejando de lado la inferencia.
 
 ```{r}
-chart.Correlation(base_proyecto[,-10], histogram = TRUE)
+chart.Correlation(base_proyecto_o[,-1], histogram = TRUE)
 ```
 
 En el gráfico se evidencia la presencia de alta correlacion, cercana a **0.9** entre la variable **google_q1** con **google_q4**, y de **0.8** con las variables **google_q3 y tasa_pasiva**. Aquí podemos ver la presencia de multicolinelidad, pero como se mencionó en líneas anteriores, no la consideraremos una limitación para los modelos paramétricos por el objetivo del estudio. Por otro lado, los modelos de Machine Learning al ser no paramétricos, la presencia de multicolinealidad no representa una limitación y las variables que se utilizarán dependerán del modelo y la importancia que estas representen para el mismo.
@@ -184,13 +183,14 @@ En el gráfico se evidencia la presencia de alta correlacion, cercana a **0.9** 
 
 
 ```{r,fig.align = 'center'}
-ggplot(base_proyecto, aes(x=fecha, y=credito_total)) +
+ggplot(base_proyecto_o, aes(x=fecha, y=credito_total)) +
   geom_line( color="#69b3a2") +
   #theme_ipsum() +
-  theme(axis.text.x=element_text(angle=60, hjust=1))+
+  theme(axis.text.x = element_text(angle = 60, hjust=1))+
   labs(title = "Colocacion Credito Credito Quirografario BIESS ",
        subtitle = "De Oct 2010 a Sep 2021",x="Fecha",y="Millones de $ (USD)",
-       caption = "Fuente: BIESS")+scale_x_date(date_breaks="1 year",date_labels ="%m-%Y")
+       caption = "Fuente: BIESS")+
+  scale_x_date(date_breaks="1 year",date_labels ="%m-%Y")
 ```
 
 Como se observa en el gráfico, desde la fecha de creación del BIESS, el monto de crédito tiene una tendencia creciente y regular que se interrumpe en el año 2016 debido a cambios en las condiciones de los créditos, como los montos, plazos y tasas. También se aprecia el shock ocasionado por el COVID a partir de 2020.
@@ -310,10 +310,10 @@ arima_predictions_list <- forecast(sarima,h=7,level = c(95))
 arima_predictions_test <- arima_predictions_list$mean
 arima_predictions <- append(arima_predictions_train,arima_predictions_test)
 
-base_proyecto_arima <- data.frame(fecha=base_proyecto[,10],
-                                  credito_total=credito_total_n,
-                                  credito_total_pred=arima_predictions) %>% 
-  mutate(residuals=credito_total-credito_total_pred)
+base_proyecto_arima <- data.frame(fecha = base_proyecto[,10],
+                                  credito_total = credito_total_n,
+                                  credito_total_pred = arima_predictions) %>% 
+  mutate(residuals = credito_total-credito_total_pred)
 ```
 
 #### Ajuste del modelo
