@@ -1,0 +1,664 @@
+---
+title: "Proyecto de Titulación"
+author: "Mateo Quiguiri"
+date: "3/07/2022"
+output:
+  rmdformats::downcute:
+    lightbox: true
+    highlight: tango
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+```
+
+```{r , include=FALSE}
+library(table1)
+library(kableExtra) # beautiful Tables
+library(Ckmeans.1d.dp)
+library(xgboost)
+library(randomForest)
+library(lmtest)
+#if (!require(randomForest)) install.packages('randomForest')
+#if (!require(interactions)) install.packages('interactions')
+library(interactions) #Graphing OLS Results
+library(jtools) #OLS Results table
+library(tidyverse) 
+library(readxl)#Tidy 
+library(janitor)
+library(lubridate)
+library(hrbrthemes)
+library(skimr)
+library(readxl)
+library(gridExtra)
+library(grid)
+library(lattice)
+library(forecast)
+library(xgboost)
+library(caret)
+library(car)
+library(mice)
+library(VIM)
+library(ggcorrplot)
+library(RColorBrewer)
+library(viridis) 
+library(PerformanceAnalytics)
+library(tseries)
+library(MLmetrics)
+#library(fastDummies)
+# Functions ---------------------------------------------------------------
+
+mape <- function(actual,pred){
+  mape <- mean(abs((actual - pred)/actual))*100
+  return (mape)
+  }
+```
+
+# Pronóstico del monto de crédito quirografario del BIESS con datos abiertos de internet y técnicas de Machine Learning (ML).
+
+<br>
+
+## Introducción: 
+
+
+De acuerdo con Haselbeck (2022), predecir la demanda futura para respaldar el análisis corporativo y la toma de decisiones es una ventaja competitiva potencial en muchas áreas, entre estas las economía y finanzas. No obstante, la literatura sobre la demanda de crédito es relativamente escasa en comparación con los estudios sobre la demanda de dinero.
+
+Medeiros (2019) afirma que existe evidencia de que el uso de métodos ML con predictores no tradicionales pueden mejorar la predicción de variables macroeconómicas como la inflación.
+
+Aunque los algoritmos de ML se están volviendo más comunes en la literatura de pronóstico, no está claro que sean superiores a los métodos tradicionales, sino que dependen de la aplicación y los datos. Haselbeck (2022)
+
+## Objetivos y Justificación:
+### Objetivo General: 
+
+•	Contrastar la utilidad de implementar nuevas fuentes de datos y métodos de Machine Learning para el pronóstico de monto de colocación de crédito quirografario.
+
+### Objetivos Específicos: 
+
+•	Caracterizar el conjunto de variables disponible y necesario para la predicción del monto de colocación de préstamos.
+•	Determinar si los avances en métodos de Machine Learning hace posible mejorar la predicción del monto de colocación de crédito.
+
+## Limitaciones
+
+Debido a la complejidad que requiere la elaboracion de un indicadores macroeconómicos, la periodicidad de los mismos estan limitados a meses y a trimestres, como es el caso de la actividad económica (PIB, VAB), que en Ecuador se elabora trimestralmente. De acuerdo con la literatura, esta variable tiene gran relevancia en la predicción del crédito agregado. No obstante, debido a su periodicidad trimestral,y la juventud del banco (12 años), el utilizar esta variable supondría una gran limitación para el análisis, al reducir considerablemente número de observaciones, además de la pérdida de informacion que esto significaría. Es por esto que para el estudio posterior, en lo posible, se buscará una variable proxy de la actividad económica con periodicidad mensual y en el presente análisis no se la ha tomado en cuenta.   
+
+## Datos  
+
+Periodicidad de las series: **Mensual**
+
+Periodo de estudio: **Octubre de 2010 a Septiembre de 2021**
+
+```{r,include=FALSE}
+base_proyecto <- read_excel("base_proyecto.xlsx",sheet = "Hoja2")
+base_proyecto<-rename(base_proyecto, fecha=Mes)
+base_proyecto<-clean_names(base_proyecto)
+
+# Data Transformation -----------------------------------------------
+base_proyecto<-base_proyecto%>% mutate(fecha=ymd(fecha),credito_total=credito_total/1000000) %>% 
+  select(-c(n_operaciones,credito_total_miles)) 
+# * Imputacion CART----
+base_proyecto_imp<-mice(base_proyecto, m=3, maxit = 50, method = 'cart', seed = 500)
+base_proyecto<-complete(base_proyecto_imp,1)
+# Serie para modelo SARIMA
+credito_total<-ts(base_proyecto$credito_total, frequency = 12, start = c(2010,10))
+# Base original para ARIMAX
+base_proyecto_o <- base_proyecto
+ts_base_proyecto_o <- ts(base_proyecto_o[,-1], frequency=12, start = c(2010,10))
+```
+
+
+### Fuentes de información:
+
+• Superintendencia de Bancos: Series del sistema financiero nacional *(Crédito total)*
+
+• Banco Central del Ecuador (BCE): Series macroeconómicas *(inflación, tasa activa, precio_wti)*
+
+• Google Trends: Series de Datos abiertos de búsquedas de Google *(Google_q#)*
+<br>
+
+### Variables:
+
+•	**"total_crédito"** Monto mensual de colocacion de préstamo quirografario del BIESS
+
+•	**"inflacion"** Riesgo proveniente del mercado real
+
+•	**"tasa_activa"** Riesgo del sector financiero
+
+•	**"precio_wti"**  Precio del petróleo WTI
+
+•	**"google_q1"** Número de busquedas de "Crédito Quirografario"
+
+•	**"google_q2"** Número de busquedas de "Crédito de Consumo"
+
+•	**"google_q3"** Número de busquedas de "Crédito quirografario BIESS"
+
+•	**"google_q4"** Número de busquedas de "Crédito consumo Banco BIESS"
+<br>
+
+### Muestra de los datos:  
+
+```{r}
+head(base_proyecto,10) %>%
+  kbl() %>%
+  kable_minimal()
+```
+
+
+### Normalización de las variables  
+
+Para evitar un análisis sesgado en el análisis posterior, todas las variables se han normalizado, restando la media y dividiendo para la desviación estandar.  
+
+## Estadística Descriptiva:
+
+```{r,fig.align='center'}
+#my_skim <- skim_with(numeric=sfl(hist=NULL))
+#my_skim(base_proyecto) # Summary #OCULTAR
+#skim(base_proyecto)
+table1::table1(~., data = base_proyecto[,-1])
+```
+
+
+
+```{r, include=FALSE}
+base_proyecto_s<-scale(base_proyecto[,-1])
+sd<-attr(base_proyecto_s,'scaled:scale')
+media<-attr(base_proyecto_s,'scaled:center')
+base_proyecto_s<-as.data.frame(base_proyecto_s)
+base_proyecto<-base_proyecto_s %>% mutate(fecha=ymd(base_proyecto$fecha))
+split_factor <- floor((nrow(base_proyecto)/20)*19)         #define % of training and test set
+ts_base_proyecto <- ts(base_proyecto[,-10], frequency=12, start = c(2010,10))
+credito_total_n <- ts_base_proyecto[,1]
+```
+
+
+### Correlación entre variables
+
+La correlación es un indicador importante para determinar el grado en el cual una variable se mueve en relación a otra, pero también puede ser un indicador de multicolinealidad. No obstante, dado que el objetivo del estudio, es la predicción, los resultados de los modelos paramétricos (ARIMA y ARIMAX) se enfocarán en el ajuste del modelo y la predicción, dejando de lado la inferencia.
+
+```{r}
+chart.Correlation(base_proyecto[,-10], histogram = TRUE)
+```
+
+En el gráfico se evidencia la presencia de alta correlacion, cercana a **0.9** entre la variable **google_q1** con **google_q4**, y de **0.8** con las variables **google_q3 y tasa_pasiva**. Aquí podemos ver la presencia de multicolinelidad, pero como se mencionó en líneas anteriores, no la consideraremos una limitación para los modelos paramétricos por el objetivo del estudio. Por otro lado, los modelos de Machine Learning al ser no paramétricos, la presencia de multicolinealidad no representa una limitación y las variables que se utilizarán dependerán del modelo y la importancia que estas representen para el mismo.
+
+<br>
+
+### Variable objetivo: Monto de colocación de crédito quirografario  
+
+
+```{r,fig.align = 'center'}
+ggplot(base_proyecto, aes(x=fecha, y=credito_total)) +
+  geom_line( color="#69b3a2") +
+  #theme_ipsum() +
+  theme(axis.text.x=element_text(angle=60, hjust=1))+
+  labs(title = "Colocacion Credito Credito Quirografario BIESS ",
+       subtitle = "De Oct 2010 a Sep 2021",x="Fecha",y="Millones de $ (USD)",
+       caption = "Fuente: BIESS")+scale_x_date(date_breaks="1 year",date_labels ="%m-%Y")
+```
+
+Como se observa en el gráfico, desde la fecha de creación del BIESS, el monto de crédito tiene una tendencia creciente y regular que se interrumpe en el año 2016 debido a cambios en las condiciones de los créditos, como los montos, plazos y tasas. También se aprecia el shock ocasionado por el COVID a partir de 2020.
+Es evidente la presencia de estacionalidad y la no covarianza-estacionaridad de la serie.
+<br>
+
+### Variables Explicativas:  
+
+
+#### Indicadores Macroeconómicos  
+
+
+```{r,fig.align = 'center'}
+g1<-ggplot(base_proyecto, aes(x=fecha, y=tasa_activa*sd[7]+media[7])) +
+  geom_line() +
+  theme(axis.text.x=element_text(angle=60, hjust=1))+
+  labs(title = "Tasa de Interés Activa",x="",y="Tasa %",caption = "Fuente: Banco Central del Ecuador")+scale_x_date(date_breaks="1 year",date_labels ="%m-%Y")
+g2<- ggplot(base_proyecto, aes(x=fecha, y=tasa_pasiva*sd[8]+media[8])) +
+  geom_line() +
+  theme(axis.text.x=element_text(angle=60, hjust=1))+
+  labs(title = "Tasa de Interés Pasiva",x="",y="Tasa %",caption = "Fuente: Banco Central del Ecuador")+scale_x_date(date_breaks="1 year",date_labels ="%m-%Y")
+g3<-ggplot(base_proyecto, aes(x=fecha, y=inflacion*sd[6]+media[6])) +
+  geom_line() +
+  theme(axis.text.x=element_text(angle=60, hjust=1))+
+  labs(title = "Inflación mensual",x="",y="Tasa %",caption = "Fuente: Banco Central del Ecuador")+scale_x_date(date_breaks="1 year",date_labels ="%m-%Y")
+g4<-ggplot(base_proyecto, aes(x=fecha, y=precio_wti*sd[9]+media[9])) +
+  geom_line() +
+  theme(axis.text.x=element_text(angle=60, hjust=1))+
+  labs(title = "Cotización barril WTI",x="",y="$ (USD)",caption = "Fuente: Banco Central del Ecuador")+scale_x_date(date_breaks="1 year",date_labels ="%m-%Y")
+
+g5<-grid.arrange(g1,g2,g3,g4,nrow=2)
+
+```
+<br>
+
+#### Datos abiertos de Google Queries  
+
+```{r,fig.align = 'center'}
+
+ colors <- c("Crédito Quirografario" = "black", "Crédito de Consumo" = "aquamarine1",
+             "Crédito Quirografario BIESS" = "brown1","Crédito Consumo BIESS"="darkblue")
+ggplot(base_proyecto, aes(x = fecha))+
+  geom_line(aes(y = google_q1*sd[2]+media[2],color="Crédito Quirografario"),alpha=0.7)+
+  geom_line(aes(y = google_q2*sd[3]+media[3],color="Crédito de Consumo"),alpha=0.7)+
+  geom_line(aes(y = google_q3*sd[4]+media[4],color="Crédito Quirografario BIESS"),alpha=0.7)+
+  geom_line(aes(y = google_q4*sd[5]+media[5],color="Crédito Consumo BIESS"),alpha=0.7)+
+  theme(axis.text.x=element_text(angle=60, hjust=1))+
+  scale_x_date(date_breaks="1 year",date_labels ="%m-%Y")+
+            labs(y="N Búsquedas",x="Fecha", color = "Serie")+
+            scale_color_manual(values = colors)
+```
+
+
+Como se puede observar la frase "Crédito Quirografrario" es la más buscada. La serie mantiene un crecimiento relativamente estable hasta 2018 donde la tendencia incrementa y se mantiene hasta justo antes la crisis del COVID donde se evidencia una disminución y estancamiento alrededor de las 50 busquedas mensuales.
+
+<br>
+
+## Estudio comparativo experimental:  
+
+
+Dado el objetivo de la investigación, las características de los datos (series de tiempo) y la disponibilidad de datos se aplicará técnicas de Machine Learning, a saber: **Long Short-Term Memory (LSTM), Gradient Boosting Decision Tree (GBDT), XGBoost  (XGB) y Random Forest (RF)**, conjuntamnte con tecnicas econométricas clásicas: **ARIMA y ARIMAX**, enfocandose en el pronóstico, con el fin de comparar el ajuste de cada modelo en el conjunto de prueba y seleccionar el modelo que presente el mejor ajuste.
+
+Dada la condicion preeliminar del estudio, solo se mostraran los pronósticos de tres modelos, **ARIMA, Random Forest y XGBoost.**. En todos los casos, se ha utilizado el **95% de los datos para el entrenamiento** del modelo y el **5% para la evaluación**. Dado el objetivo del estudio de determinar el modelo mas flexible que pueda absorber y pronosticar correctamente shocks como el COVID, sería incorrecto entrenar el modelo con datos anteriores al COVID pues no capturaria el shock, lo que se reflejaría en un bajo poder de predicción.
+
+Teniendo en cuenta que los modelos ML aplicados para regresión necesitan que la fecha de los datos sean representados como variables dummy, se ha ampliado la base, tal que la base que se utilizará para los modelos ML es la siguiente:
+
+```{r}
+set.seed(28)
+# Data Cleaning and Transforming
+base_proyecto$year = lubridate::year(base_proyecto$fecha)
+base_proyecto$yday = yday(base_proyecto$fecha)
+#base_proyecto$quarter = quarter(base_proyecto$fecha)
+base_proyecto$month = lubridate::month(base_proyecto$fecha)
+#base_proyecto$day = lubridate::day(base_proyecto$fecha)
+#base_proyecto$weekdays = weekdays(base_proyecto$fecha)
+#glimpse(base_proyecto)
+#base_proyecto = as.data.table(base_proyecto)
+base_proyecto$month = as.factor(base_proyecto$month)
+#base_proyecto$weekdays = factor(base_proyecto$weekdays,levels = c("Monday", "Tuesday", "Wednesday","Thursday","Friday","Saturday",'Sunday'))
+#base_proyecto[weekdays %in% c("Saturday",'Sunday'),weekend:=1]
+#base_proyecto[!(weekdays %in% c("Saturday",'Sunday')),weekend:=0]
+#base_proyecto$weekend = as.factor(base_proyecto$weekend)
+base_proyecto$year = as.factor(base_proyecto$year)
+
+head(base_proyecto[,-10]) %>%
+  kbl() %>%
+  kable_minimal()
+```
+
+
+
+### Modelo ARIMA
+
+
+Al descomponer la serie se puede observar la presencia de tendencia y estacionalidad, la cual nos da una idea de que la especificación del modelo incluirá una estacionalidad, además de indicarnos la presencia de no estacionariedad, quedando como paso siguiente, la diferenciación de la serie.
+
+
+```{r}
+autoplot(decompose(credito_total, type = "additive")) + xlab("Time") + ylab("") + 
+  ggtitle("Decomposition plot of the Credit Volume Time-Series") + 
+  theme(plot.title = element_text(hjust = 0.5))
+```
+
+
+Con la ayuda de la función autoARIMA del paquete *forecast*, que automáticamente busca la mejor especificación estimando varios modelos y comparándo su calidad mediante criterios de información como AIC, el modelo seleccionado es el **SARIMA (1,1,3) (0,0,2) (12)**. *(La funcion considera la necesidad o no de aplicar primeras o segundas diferencias de las series)*
+
+
+```{r, include=FALSE}
+arima_train <- ts(credito_total_n[1:split_factor],frequency=12,start = c(2010,10))           #training set
+arima_test <- ts(credito_total_n[(split_factor+1):132],frequency=12,start = c(2021,03))              #test set
+
+sarima<- arima(arima_train, c(1,1,3),seasonal = list(order = c(0,0,2),period= 12)) #ARIMA 301
+summary(sarima)
+
+arima_predictions_train <- (arima_train-sarima$residuals)
+arima_predictions_list <- forecast(sarima,h=7,level = c(95))
+arima_predictions_test <- arima_predictions_list$mean
+arima_predictions <- append(arima_predictions_train,arima_predictions_test)
+
+base_proyecto_arima <- data.frame(fecha=base_proyecto[,10],
+                                  credito_total=credito_total_n,
+                                  credito_total_pred=arima_predictions) %>% 
+  mutate(residuals=credito_total-credito_total_pred)
+```
+
+#### Ajuste del modelo
+
+A continuación se observa el ajuste del modelo en el conjunto de entrenamiento y de prueba.
+
+```{r,fig.align = 'center',warning=FALSE}
+
+colors <- c("Valor Real" = "azure4", "Pronóstico" = "#69b3a2")
+ggplot(base_proyecto_arima, aes(x = fecha))+
+  geom_line(aes(y = as.numeric(credito_total)*sd[1]+media[1],color="Valor Real"))+
+  geom_line(aes(y = credito_total_pred*sd[1]+media[1],color="Pronóstico"))+
+  theme(axis.text.x=element_text(angle=60, hjust=1))+
+  annotate("rect", xmin = as.Date("2021-03-01", "%Y-%m-%d"), 
+           xmax = as.Date ("2021-09-01", "%Y-%m-%d"), ymin = -Inf, ymax = Inf,
+           alpha = .1,fill = "red")+scale_x_date(date_breaks="1 year",date_labels ="%m-%Y")+
+            labs(y="Millones de $ (USD)",x="Fecha", color = "Serie")+
+            scale_color_manual(values = colors)+
+            labs(caption = "SARIMA (1,1,3) (0,0,2) (12)")
+```
+
+Si se tiene en cuenta el choque que el COVID ha tenido sobre la variable objetivo se puede entender el bajo ajuste del modelo ARIMA, ya que al ser un modelo univariado, depende solo de sus valores pasados o rezagos, dejando de lado eventos exógenos que alteren la tendencia o la estacionalidad de la serie, como es el caso del presente estudio.
+
+### Modelo ARIMAX
+
+
+
+Para poder incluir otros regresores al modelo ARIMA es necesario comprobar su estacionariedad, para lo cual se ha aplicado las pruebas de Phillips-Perron (PP) y Augmented Dickey Fuller (ADF) a todos los variables de la base, siendo todos estacionarios hasta en segundas diferencias. Sin embargo, luego de estimar los modelos con los distintos regresores, el modelo que ofrecía el menor AIC, más parsimonia y mayor calidad de pronóstico fue el modelo con un solo regresor; la variable *google_q2*.
+
+```{r}
+autoplot(decompose(ts_base_proyecto_o[,3], type = c("additive","multiplicative"))) + xlab("Fecha") + ylab("") + 
+  ggtitle("Decomposition plot of the google_q2 Time-Series") + 
+  theme(plot.title = element_text(hjust = 0.5))
+#autoplot(diff(ts_base_proyecto_o[,3])) # Getting the tserie stationary 
+
+#Acf(diff(ts_base_proyecto_o[,3]),lag.max = 40) #ACF
+#Pacf(diff(ts_base_proyecto_o[,3]),lag.max = 40) #PACF
+
+```
+
+Se verifica la estacionariedad de la serie en primeras diferencias:
+
+```{r,warning=FALSE}
+adf.test(diff(ts_base_proyecto_o[,3]), alternative="stationary", k=0) # Test Estacionariedad
+pp.test(diff(ts_base_proyecto_o[,3]))
+```
+
+
+Al igual que en el modelo ARIMA, se ha utilizado la función autoARIMA del paquete *forecast*, para encontrar la mejor especificación de acuerdo al criterio AIC. Determinando que el mejor modelo es **ARIMAX (1,1,3) (0,0,2) (12)** 
+
+
+```{r, include=FALSE}
+arimax_train <- ts(base_proyecto_o[1:split_factor,c(2:4,9)],frequency=12,start = c(2010,10))           #training set
+arimax_test <- ts(base_proyecto_o[(split_factor+1):132,c(2:4,9)],frequency=12,start = c(2021,3))
+#test set
+
+autoARIMAX <- auto.arima(arimax_train[,1],xreg = arimax_train[,c(3)], trace=TRUE)
+summary(autoARIMAX)
+
+arimax_predictions_train <- autoARIMAX$fitted
+arimax_predictions_list <- autoARIMAX %>%  forecast(xreg=arimax_test[,c(3)])
+arimax_predictions_test <- arimax_predictions_list$mean
+arimax_predictions <- append(arimax_predictions_train,arimax_predictions_test)
+
+base_proyecto_arimax <- data.frame(fecha=base_proyecto[,10],
+                                  credito_total=credito_total_n*sd[1]+media[1],
+                                  credito_total_pred=arimax_predictions) %>% 
+  mutate(residuals=credito_total-credito_total_pred)
+```
+
+#### Ajuste del modelo
+
+A continuación se observa el ajuste del modelo en el conjunto de entrenamiento y de prueba.
+
+```{r,fig.align = 'center',warning=FALSE}
+
+colors <- c("Valor Real" = "azure4", "Pronóstico" = "#69b3a2")
+ggplot(base_proyecto_arimax, aes(x = fecha))+
+  geom_line(aes(y = as.numeric(credito_total),color="Valor Real"))+
+  geom_line(aes(y = credito_total_pred,color="Pronóstico"))+
+  theme(axis.text.x=element_text(angle=60, hjust=1))+
+  annotate("rect", xmin = as.Date("2021-03-01", "%Y-%m-%d"), 
+           xmax = as.Date ("2021-09-01", "%Y-%m-%d"), ymin = -Inf, ymax = Inf,
+           alpha = .1,fill = "red")+scale_x_date(date_breaks="1 year",date_labels ="%m-%Y")+
+  labs(y="Millones de $ (USD)",x="Fecha", color = "Serie")+
+  scale_color_manual(values = colors)+
+  labs(caption = "ARIMAX (1,1,3) (0,0,2) (12)")
+```
+
+Dada la naturaleza de la serie, se evidencia que los de modelos autoregresivos presentan un bajo ajuste, aún luego de aplicar transformaciones para estabilizar la media e incluír regresores adicionales, por lo que para el estudio posterior se aplicará transformaciones Box Cox que estabilicen la varianza y se comprobará si mejora el ajuste.   
+
+### Modelo Random Forest RF  
+
+<br>
+
+#### Importancia de las variables
+
+Después de construir el modelo podemos sacar un indice de importancia de las variables, es decir un indicador que cuantifica la influencia que los regresores tienen sobre la variable dependiente.  
+
+
+```{r}
+split_factor <- floor((nrow(base_proyecto)/20)*19)   
+ml_train <- base_proyecto[1:split_factor,-10]  #training set
+ml_test <- base_proyecto[(split_factor+1):132,-10]   
+
+#rf = randomForest(credito_total~year+google_q1+tasa_pasiva+google_q4+google_q2+precio_wti+ month, data = ml_train)
+rf = randomForest(credito_total~., data = ml_train,importance=TRUE)
+
+ImpData <- as.data.frame(importance(rf))
+ImpData$Var.Names <- row.names(ImpData)
+
+ggplot(ImpData, aes(x=Var.Names, y=`%IncMSE`)) +
+  geom_segment( aes(x=Var.Names, xend=Var.Names, y=0, yend=`%IncMSE`), color="skyblue") +
+  geom_point(aes(size = IncNodePurity), color="blue", alpha=0.6) +
+  theme_light() +
+  coord_flip() +
+  theme(
+    legend.position="bottom",
+    panel.grid.major.y = element_blank(),
+    panel.border = element_blank(),
+    axis.ticks.y = element_blank()
+  )
+
+rf_predictions_train = predict(rf, newdata = ml_train)
+
+rf_predictions_test = predict(rf, newdata = ml_test)
+predictions_plot <- append(rf_predictions_train,rf_predictions_test)
+base_proyecto_rf <- data.frame(fecha=base_proyecto$fecha,credito_total=base_proyecto$credito_total)
+base_proyecto_rf$credito_total_pred<-predictions_plot
+base_proyecto_rf$residuals <- (base_proyecto_rf$credito_total - base_proyecto_rf$credito_total_pred)
+```
+
+#### Ajuste del modelo
+
+A continuación se observa el ajuste del modelo en el conjunto de entrenamiento y de prueba.
+
+```{r,fig.align = 'center'}
+
+colors <- c("Valor Real" = "azure4", "Pronóstico" = "#69b3a2")
+ggplot(base_proyecto_rf, aes(x = fecha))+
+  geom_line(aes(y = credito_total*sd[1]+media[1],color="Valor Real"))+
+  geom_line(aes(y = credito_total_pred*sd[1]+media[1],color="Pronóstico"))+
+  theme(axis.text.x=element_text(angle=60, hjust=1))+
+  annotate("rect", xmin = as.Date("2021-03-01", "%Y-%m-%d"), 
+           xmax = as.Date ("2021-09-01", "%Y-%m-%d"), ymin = -Inf, ymax = Inf,
+           alpha = .1,fill = "red")+scale_x_date(date_breaks="1 year",date_labels ="%m-%Y")+
+            labs(y="Millones de $ (USD)",x="Fecha", color = "Serie")+
+            scale_color_manual(values = colors)+
+            labs(caption = "Random Forest (RF)")
+
+```
+
+
+En el gráfico se puede observar que el modelo RF se comporta mejor que un modelo autoregresivo.  
+
+<br>
+
+### Modelo Xtreme Gradient Boosting XGB
+
+
+#### Importancia de las variables
+
+
+```{r, include=FALSE}
+xgb_train <- base_proyecto[1:split_factor,]
+
+train_targets <- xgb_train$credito_total  #Y train
+
+xgb_train[] <- sapply(xgb_train, as.numeric)
+xgb_train <- select(xgb_train,-c(1,10))
+
+xgb_test <- base_proyecto[(split_factor+1):132,]
+
+test_targets <- xgb_test$credito_total  #Y test
+
+xgb_test[] <- sapply(xgb_test, as.numeric)
+xgb_test <- select(xgb_test,-c(1,10))
+
+
+#Transform train and test data to DMatrix form
+# train_Dmatrix <- xgb_train %>% 
+#   dplyr::select(-c(1,10)) %>% mutate(year=as.numeric(year),month=as.numeric(month)) %>% 
+#   as.matrix() %>% 
+#   xgb.DMatrix()
+# 
+# pred_Dmatrix <- xgb_test %>% 
+#   dplyr::select(-c(1,10)) %>% mutate(year=as.numeric(year),month=as.numeric(month)) %>% 
+#   as.matrix() %>% 
+#   xgb.DMatrix()
+
+#Cross-validation
+xgb_trcontrol <- trainControl(
+  method = "cv", 
+  number = 3,
+  allowParallel = TRUE, 
+  verboseIter = FALSE
+)
+
+#Building parameters set
+xgb_grid <- expand.grid(
+  list(
+    nrounds = c(500,1000,1500),
+    max_depth = c(2,4,6), 
+    colsample_bytree = 1, 
+    eta = 0.3,
+    gamma = 0,
+    min_child_weight = 1,  
+    subsample = 1)
+)
+#Building the model
+model_xgb <- train(x = xgb_train,
+                   y = train_targets,
+  trControl = xgb_trcontrol,
+  tuneGrid = xgb_grid,
+  method = "xgbTree",
+  verbose = TRUE)
+
+model_xgb
+```
+
+
+Después de construir el modelo podemos sacar un indice de importancia de las variables, es decir un indicador que cuantifica la influencia que los regresores tienen sobre la variable dependiente.  
+
+```{r}
+xgb_imp <- xgb.importance(
+  feature_names = colnames(xgb_train),
+  model = model_xgb$finalModel)
+
+xgb.ggplot.importance(xgb_imp,n_clusters = c(2))+ 
+  ggtitle("Importancia de variables explicativas") +
+  theme_bw()+
+  theme(legend.position="none")
+```
+
+#### Ajuste del modelo
+
+A continuación se observa el ajuste del modelo en el conjunto de entrenamiento y prueba.
+
+```{r,fig.align = 'center'}
+xgb_predictions_test <- predict(model_xgb, xgb_test)
+
+# Creating variables for model Performance 
+xgb_predictions_train <- predict(model_xgb)
+xgb_predictions <- append(xgb_predictions_train,xgb_predictions_test)
+
+base_proyecto_xgb <- data.frame(fecha=base_proyecto[,10],
+                                  credito_total=as.numeric(credito_total_n),
+                                  credito_total_pred=xgb_predictions) %>% 
+  mutate(residuals=credito_total-credito_total_pred)
+# Forecast Plot
+colors <- c("Valor Real" = "azure4", "Pronóstico" = "#69b3a2")
+ggplot(base_proyecto_xgb, aes(x = fecha))+
+  geom_line(aes(y = credito_total*sd[1]+media[1],color="Valor Real"))+
+  geom_line(aes(y = credito_total_pred*sd[1]+media[1],color="Pronóstico"))+
+  theme(axis.text.x=element_text(angle=60, hjust=1))+
+  annotate("rect", xmin = as.Date("2021-03-01", "%Y-%m-%d"), 
+           xmax = as.Date ("2021-09-01", "%Y-%m-%d"), ymin = -Inf, ymax = Inf,
+           alpha = .1,fill = "red")+scale_x_date(date_breaks="1 year",date_labels ="%m-%Y")+
+            labs(y="Millones de $ (USD)",x="Fecha", color = "Serie")+
+            scale_color_manual(values = colors)+
+            labs(caption = "Random Forest (RF)")
+
+```
+
+<br>
+
+### Comparación de modelos de acuerdo a MAPE, MSE y RMSE en el conjunto de evaluación
+
+Es aquí donde finalmente se compara el poder de predicción de los modelos en el conjunto de evaluación y se identifica al mejor modelo.  
+
+  
+```{r,fig.align = 'center'}
+base_proyecto_comparacion <- base_proyecto[,c(10,1)]
+base_proyecto_comparacion$pred_sarima <- base_proyecto_arima$credito_total_pred
+base_proyecto_comparacion$pred_rf <- base_proyecto_rf$credito_total_pred
+base_proyecto_comparacion$pred_xgb <- base_proyecto_xgb$credito_total_pred
+base_proyecto_comparacion$pred_arimax <- base_proyecto_arimax$credito_total_pred
+
+colors <- c("Valor Actual" = "black", "Sarima" = "green", "Random Forest" = "brown1","XGBoost"="blue", "Arimax"="chocolate4")
+ggplot(base_proyecto_comparacion, aes(x = fecha))+
+  annotate("rect", xmin = as.Date("2021-03-01", "%Y-%m-%d"), 
+           xmax = as.Date ("2021-10-01", "%Y-%m-%d"), ymin = -Inf, ymax = Inf,
+           alpha = .1,fill = "red")+
+  geom_line(aes(y = credito_total*sd[1]+media[1],color="Valor Actual"),alpha=0.7)+
+  geom_line(aes(y = pred_sarima*sd[1]+media[1],color="Sarima"),alpha=0.5)+
+  geom_line(aes(y = pred_rf*sd[1]+media[1],color="Random Forest"),alpha=0.5)+
+  geom_line(aes(y = pred_xgb*sd[1]+media[1],color="XGBoost"),alpha=0.5)+
+  geom_line(aes(y = pred_arimax,color="Arimax"),alpha=0.5)+
+  theme(axis.text.x=element_text(angle=60, hjust=1))+
+            coord_cartesian(xlim=as.Date(c("2019-01-01","2021-10-01")))+scale_x_date(date_breaks="3 months",
+                                                  date_labels ="%m-%Y")+
+            labs(title = "Comparación de Modelos",y="Credito total en Millones de $ (USD)",x="Fecha", color = "Modelo")+
+            scale_color_manual(values = colors)
+```
+
+
+```{r,fig.align = 'center'}
+modelo <- c("ARIMA","ARIMAX","RANDOM FOREST","XGBOOST")
+mape <- c(93.7123,44.0226,51.5909,29.9703)
+mse <- c(1.4291,0.4555,0.5299,0.2405)
+rmse <- c(1.1954,0.6749,0.7279,0.4904)
+
+base_proyecto_comparacion <- data.frame("MODELO"=modelo,"MAPE"=mape,"MSE"=mse,"RMSE"=rmse)
+
+(base_proyecto_comparacion) %>% kbl() %>%
+  kable_minimal()
+```
+<br>
+
+De acuerdo a la evidencia conseguida en el análisis preeliminar se puede concluir que en el el modelo que ofrece un mejor pronóstico del crédito quirografario es el modelo XGBoost, teniendo un ajuste excelente en con el conjunto de entrenamiento y superior a los otros modelos en el conjunto de prueba, de acuerdo a las los indicadores de calidad de pronóstico MAPE, MSE, RMSE. No obstante, es necesario mencionar el ajuste del modelo ARIMAX, que tiene el segundo mejor pronóstico evidenciando el buen desempeño que pueden ofrecer los métodos clásicas frente al los ML cuando el número de observaciones es bajo. 
+
+Cabe recalcar que el modelo XGBoost es conocido por ser el modelo preferido para realizar pronósticos en plataformas como Kaggle. 
+
+## Conclusión:
+
+En el presente trabajo se ha seleccionado de manera detallada las fuentes de datos y las variables relevantes para la predicción del monto de colocación del préstamo quirografario. Posteriormente se describieron los datos y se usaron en una comparación experimental del ajuste, tanto de modelos paramétricos (ARIMA, ARIMAX) como no paramétricos (XGboost, Random Forest), concluyendo que el modelo que mejor ajuste presenta es el XGboost.
+
+La importancia que los datos abiertos de las búsquedas de google han tenido en el pronóstico puede explicar el desempeño que el método de ML, XGBoost ha tenido frente a modelos clásicos autoregresivos. Sin embargo, quedan pendientes modificaciones (transformaciones Box Cox) tanto para los modelos clásicos como para los modelos de ML (ajuste de parámetros para el entrenamiento del modelo) que pueden mejorar el pronóstico, sobre todo para los métodos de ML.
+
+## Bibliografía:
+
+Hassani, H., & Silva, E. S. (2015). Forecasting with Big Data: A Review. In Annals of Data Science (Vol. 2, Issue 1, pp. 5–19). Springer Science and Business Media Deutschland GmbH. https://doi.org/10.1007/s40745-015-0029-9 
+
+Varian, H. R. (2014). Big data: New tricks for econometrics. Journal of Economic Perspectives, 28(2), 3–28. https://doi.org/10.1257/jep.28.2.3 
+
+SCHOOLEY, D. K., & WORDEN, D. D. (2010). Fueling the Credit Crisis: Who Uses Consumer Credit and What Drives Debt Burden? Business Economics, 45(4), 266–276. http://www.jstor.org/stable/23491789
+
+Gattin-turkalj, K., Ljubaj, I., Martinis, A., & Mrkalj, M. (2007). Estimating Credit Demand in Croatia Draft version. Croatian National Bank Paper, (April), 1–36.
+
+Asiamah TA, Steel WF, Ackah C. Determinants of credit demand and credit constraints among households in Ghana. Heliyon. 2021 Oct;7(10):e08162. DOI: 10.1016/j.heliyon.2021.e08162. PMID: 34765759; PMCID: PMC8569385.
+
+Stavinova, E., Timoshina, A., & Chunaev, P. (2021). Forecasting the volume of mortgage loans with open Internet data in the period of noticeable changes in the Russian mortgage market. Procedia Computer Science, 193, 266–275. https://doi.org/https://doi.org/10.1016/j.procs.2021.10.027
+
+Reynaga, N. C. (2018). La demanda de crédito de las personas: el RCC conoce a la ENAHO. Monetaria, VI(1), 107–145.
+
+Maldonado, L., & Vera, L. (2011). Los determinantes de la demanda de crédito de los hogares: un modelo de vectores de corrección de errores para Venezuela. Nueva Economía, 19(November), 13–45. Retrieved from https://www.researchgate.net/publication/317786081
+
+Haselbeck, F., Killinger, J., Menrad, K., Hannus, T., & Grimm, D. G. (2022). Machine Learning Outperforms Classical Forecasting on Horticultural Sales Predictions. Machine Learning with Applications, 7, 100239. https://doi.org/https://doi.org/10.1016/j.mlwa.2021.100239
+
+Cunha Medeiros, Marcelo and Vasconcelos, Gabriel and Veiga, Alvaro and Zilberman, Eduardo, Forecasting Inflation in a Data-Rich Environment: The Benefits of Machine Learning Methods (April 30, 2019). Available at SSRN: https://ssrn.com/abstract=3155480 or http://dx.doi.org/10.2139/ssrn.3155480
+
+
+
+
+
+
