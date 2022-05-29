@@ -1,86 +1,95 @@
 # Libraries ---------------------------------------------------------------
-library(normwhn.test) #Whit noise test
-library(LSTS) #plot P-values Ljung Box test
-library(Ckmeans.1d.dp)
-library(xgboost)
-library(randomForest)
-library(lmtest)
 #if (!require(randomForest)) install.packages('randomForest')
-#if (!require(interactions)) install.packages('interactions')
-library(interactions) #Graphing OLS Results
+library(table1) #Summary statistics
+library(kableExtra) # beautiful Tables
+#library(Ckmeans.1d.dp)
+library(xgboost) 
+library(randomForest)
+library(lmtest) #diagnostic checking in linear regression models
+#library(interactions) #Graphing OLS Results
 library(jtools) #OLS Results table
 library(tidyverse) 
+library(readxl)#Tidy 
+library(janitor) #clean_names
+library(lubridate) # time data
+library(hrbrthemes) # color extra 'ggplot2' themes
+#library(skimr) # Summary
 library(readxl)
-library(janitor)
-library(lubridate)
-library(hrbrthemes)
-library(skimr)
-library(readxl)
-library(gridExtra)
-library(grid)
-library(lattice)
-library(forecast)
+library(gridExtra) #grid plots
+library(grid) # plots
+library(lattice) # plots
+library(forecast) 
 library(xgboost)
-library(caret)
-library(car)
-library(mice)
-library(VIM)
+library(caret) #predictive models
+library(car) 
+library(mice) #data imputatation
+#library(VIM) #Missin Values
 library(ggcorrplot)
-library(RColorBrewer)
+#library(RColorBrewer)
 library(viridis) 
 library(PerformanceAnalytics)
 library(tseries)
 library(MLmetrics)
-library(fastDummies)
-library(aTSA)
 # Functions ---------------------------------------------------------------
-
 mape <- function(actual,pred){
   mape <- mean(abs((actual - pred)/actual))*100
   return (mape)
-  }
+}
 
 # Data Import and Cleaning ------------------------------------------------
 
-base_proyecto <- read_excel("base_proyecto.xlsx",sheet = "Hoja2")
-base_proyecto<-rename(base_proyecto, fecha=Mes)
-base_proyecto<-clean_names(base_proyecto)
+base_proyecto <- read_excel("base_proyecto.xlsx",sheet = "Hoja2") %>% 
+  rename(fecha = Mes) %>% 
+  clean_names()
 
 # Data Transformation -----------------------------------------------
-set.seed(28)
-base_proyecto<-base_proyecto%>% mutate(fecha=ymd(fecha),credito_total=credito_total/1000000) %>% 
+base_proyecto <- base_proyecto%>% 
+  mutate(fecha=ymd(fecha),credito_total=credito_total/1000000) %>% 
   select(-c(n_operaciones,credito_total_miles)) 
 # * Imputacion CART----
-base_proyecto_imp<-mice(base_proyecto, m=3, maxit = 50, method = 'cart', seed = 500)
-base_proyecto<-complete(base_proyecto_imp,1)
+base_proyecto_imp <- mice(base_proyecto, m=3, maxit = 50, method = 'cart', seed = 500)
+base_proyecto <- complete(base_proyecto_imp,1)
 # Serie para modelo SARIMA
-credito_total<-ts(base_proyecto$credito_total, frequency = 12, start = c(2010,10))
+credito_total <- ts(base_proyecto$credito_total, frequency = 12, start = c(2010,10))
 # Base original para ARIMAX
 base_proyecto_o <- base_proyecto
 ts_base_proyecto_o <- ts(base_proyecto_o[,-1], frequency=12, start = c(2010,10))
+# Muestra de los datos
+head(base_proyecto,10) %>%
+  kbl() %>%
+  kable_minimal()
+
+
 # * Normalizacion CARET ----
-base_proyecto_s<-scale(base_proyecto[,-1])
-sd<-attr(base_proyecto_s,'scaled:scale')
-media<-attr(base_proyecto_s,'scaled:center')
-base_proyecto_s<-as.data.frame(base_proyecto_s)
-base_proyecto<-base_proyecto_s %>% mutate(fecha=ymd(base_proyecto$fecha))
+base_proyecto_s <- scale(base_proyecto[,-1]) #matriz para escalar
+sd <- attr(base_proyecto_s,'scaled:scale')
+media <- attr(base_proyecto_s,'scaled:center')
+base_proyecto_s <- as.data.frame(base_proyecto_s)
+base_proyecto <- base_proyecto_s %>% mutate(fecha=ymd(base_proyecto$fecha))
 split_factor <- floor((nrow(base_proyecto)/20)*19)         #define % of training and test set
-ts_base_proyecto <- ts(base_proyecto[,-10], frequency=12, start = c(2010,10))
+ts_base_proyecto <- ts(base_proyecto[,-10], frequency = 12, start = c(2010,10))
 credito_total_n <- ts_base_proyecto[,1]
 # Descriptive Statistics --------------------------------------------------
 head(base_proyecto,10) %>%
   kbl() %>%
   kable_minimal()# Summary
+#my_skim <- skim_with(numeric=sfl(hist=NULL))
+#my_skim(base_proyecto) # Summary #OCULTAR
+#skim(base_proyecto)
+table1::table1(~., data = base_proyecto_o[,-1])
+
+
 #base_proyecto_cor<-cor_pmat(base_proyecto[,-1],method='spearman') # Corr Spearman
 chart.Correlation(base_proyecto[,-10], histogram = TRUE) # Corr Pearson
 
-ggplot(base_proyecto, aes(x=fecha, y=credito_total)) +
+ggplot(base_proyecto_o, aes(x=fecha, y=credito_total)) +
   geom_line( color="#69b3a2") +
   #theme_ipsum() +
-  theme(axis.text.x=element_text(angle=60, hjust=1))+
+  theme(axis.text.x = element_text(angle = 60, hjust=1))+
   labs(title = "Colocacion Credito Credito Quirografario BIESS ",
-       subtitle = "De Oct 2010 a Sep 2021",x="fecha",y="Millones de $ (USD)",
-       caption = "Fuente: BIESS")+scale_x_date(date_breaks="1 year",date_labels ="%m-%Y")
+       subtitle = "De Oct 2010 a Sep 2021",x="Fecha",y="Millones de $ (USD)",
+       caption = "Fuente: BIESS")+
+  scale_x_date(date_breaks="1 year",date_labels ="%m-%Y")
 
 g1<-ggplot(base_proyecto, aes(x=fecha, y=tasa_activa)) +
   geom_line() +
@@ -101,42 +110,32 @@ g4<-ggplot(base_proyecto, aes(x=fecha, y=precio_wti)) +
 
 g5<-grid.arrange(g1,g2,g3,g4,nrow=2)
 
-ggplot(base_proyecto, aes(x=fecha, y=google_q1)) +
-  geom_line() +geom_line(aes(fecha,google_q2),color='aquamarine1')+
-  geom_line(aes(fecha,google_q3),col='brown1',show.legend = TRUE)+
-  geom_line(aes(fecha,google_q4),col='azure4',show.legend = TRUE)+
+# Google queries
+colors <- c("Crédito Quirografario" = "black", "Crédito de Consumo" = "aquamarine1",
+            "Crédito Quirografario BIESS" = "brown1","Crédito Consumo BIESS"="darkblue")
+ggplot(base_proyecto, aes(x = fecha))+
+  geom_line(aes(y = google_q1*sd[2]+media[2],color="Crédito Quirografario"),alpha=0.7)+
+  geom_line(aes(y = google_q2*sd[3]+media[3],color="Crédito de Consumo"),alpha=0.7)+
+  geom_line(aes(y = google_q3*sd[4]+media[4],color="Crédito Quirografario BIESS"),alpha=0.7)+
+  geom_line(aes(y = google_q4*sd[5]+media[5],color="Crédito Consumo BIESS"),alpha=0.7)+
   theme(axis.text.x=element_text(angle=60, hjust=1))+
-  labs(title = "Busquedas de Google",subtitle = "Prestamos Quirografarios BIESS",x="Fecha",y="Busquedas",
-       caption = "Fuente: Google Trends")+
-  scale_x_date(date_breaks="1 year",date_labels ="%m-%Y")
+  scale_x_date(date_breaks="1 year",date_labels ="%m-%Y")+
+  labs(y="N Búsquedas",x="Fecha", color = "Serie")+
+  scale_color_manual(values = colors)
 
 #ggsave("g1.png",height = 12,width = 12,units = "cm")
 
+# Estudio comparativo experimental ----------------------------------------
 
 # ML data preparation -----------------------------------------------------
 set.seed(28)
 # Data Cleaning and Transforming
-base_proyecto$year = lubridate::year(base_proyecto$fecha)
-base_proyecto$yday = yday(base_proyecto$fecha)
-#base_proyecto$quarter = quarter(base_proyecto$fecha)
-base_proyecto$month = lubridate::month(base_proyecto$fecha)
-#base_proyecto$day = lubridate::day(base_proyecto$fecha)
-#base_proyecto$weekdays = weekdays(base_proyecto$fecha)
-#glimpse(base_proyecto)
-#base_proyecto = as.data.table(base_proyecto)
-base_proyecto$month = as.factor(base_proyecto$month)
-#base_proyecto$weekdays = factor(base_proyecto$weekdays,levels = c("Monday", "Tuesday", "Wednesday","Thursday","Friday","Saturday",'Sunday'))
-#base_proyecto[weekdays %in% c("Saturday",'Sunday'),weekend:=1]
-#base_proyecto[!(weekdays %in% c("Saturday",'Sunday')),weekend:=0]
-#base_proyecto$weekend = as.factor(base_proyecto$weekend)
-base_proyecto$year = as.factor(base_proyecto$year)
-#base_proyecto$quarter = as.factor(base_proyecto$quarter)
-#base_proyecto$week = format(base_proyecto$Date, "%V")
-#base_proyecto = as.data.frame(base_proyecto)
-#base_proyecto$week = as.integer(base_proyecto$week)
-#base_proyecto <- fastDummies::dummy_cols(base_proyecto)
-#base_proyecto <- sapply(base_proyecto, as.numeric) #Keeps data frame 
-glimpse(base_proyecto)
+base_proyecto <- base_proyecto %>% mutate(year =as.factor(year(fecha)),yday = yday(fecha),
+                                          month = as.factor(month(fecha)))
+
+head(base_proyecto[,-10]) %>%
+  kbl() %>%
+  kable_minimal()
 
 
 # OLS Model ---------------------------------------------------------------
@@ -200,7 +199,6 @@ vif(ols_model)
 autoplot(decompose(credito_total, type = "additive")) + xlab("Time") + ylab("") + 
   ggtitle("Decomposition plot of the Credit Volume Time-Series") + 
   theme(plot.title = element_text(hjust = 0.5))
-
 #autoplot(diff(log(credito_total))) # Getting the tserie stationary 
 #adf.test(diff(log(credito_total)), alternative="stationary", k=0) # Test Estacionariedad
 
@@ -213,16 +211,16 @@ arima_test <- ts(credito_total_n[(split_factor+1):132],frequency=12,start = c(20
 
 sarima<- arima(arima_train, c(1,1,3),seasonal = list(order = c(0,0,2),period= 12)) #ARIMA 301
 summary(sarima)
-#autoARIMA <- auto.arima(arima_train, trace=TRUE)
+
 arima_predictions_train <- (arima_train-sarima$residuals)
 arima_predictions_list <- forecast(sarima,h=7,level = c(95))
 arima_predictions_test <- arima_predictions_list$mean
 arima_predictions <- append(arima_predictions_train,arima_predictions_test)
 
-base_proyecto_arima <- data.frame(fecha=base_proyecto[,10],
-                                  credito_total=credito_total_n,
-                                  credito_total_pred=arima_predictions) %>% 
-  mutate(residuals=credito_total-credito_total_pred)
+base_proyecto_arima <- data.frame(fecha = base_proyecto[,10],
+                                  credito_total = credito_total_n,
+                                  credito_total_pred = arima_predictions) %>% 
+  mutate(residuals = credito_total-credito_total_pred)
 
 # How the model fitted the data
 # plot(credito_total) 
@@ -236,15 +234,22 @@ base_proyecto_arima <- data.frame(fecha=base_proyecto[,10],
 # Forecast Plot with confidence interval
 #autoplot(forecast(arima_predictions_list))
 # Forecast Plot
-ggplot(data=base_proyecto_arima)+geom_line(aes(fecha,credito_total*sd[1]+media[1]),col="#69b3a2")+
-  geom_line(aes(fecha,credito_total_pred*sd[1]+media[1]),col="gray")+theme(axis.text.x=element_text(angle=60, hjust=1))+
+colors <- c("Valor Real" = "azure4", "Pronóstico" = "#69b3a2")
+ggplot(base_proyecto_arima, aes(x = fecha))+
+  geom_line(aes(y = as.numeric(credito_total)*sd[1]+media[1],color="Valor Real"))+
+  geom_line(aes(y = credito_total_pred*sd[1]+media[1],color="Pronóstico"))+
+  theme(axis.text.x=element_text(angle=60, hjust=1))+
   annotate("rect", xmin = as.Date("2021-03-01", "%Y-%m-%d"), 
            xmax = as.Date ("2021-09-01", "%Y-%m-%d"), ymin = -Inf, ymax = Inf,
-           alpha = .1,fill = "red")+scale_x_date(date_breaks="1 year",date_labels ="%m-%Y")+ylab("Credito Total")
+           alpha = .1,fill = "red")+scale_x_date(date_breaks="1 year",date_labels ="%m-%Y")+
+  labs(y="Millones de $ (USD)",x="Fecha", color = "Serie")+
+  scale_color_manual(values = colors)+
+  labs(caption = "SARIMA (1,1,3) (0,0,2) (12)")
+
 # Model Performance
 
 mape_sarima <- mape(arima_train,arima_predictions_train)  #MAPE Si existe sobreajuste se debe eliminar variables de acuerdo al MSE
-mse_sarima <- mean((arima_train-arima_predictions_train)^2)  #MSE
+mse_sarima <- mean((arima_train-arima_predictions_train)^2) #MSE
 rmse_sarima <- sqrt(mean((arima_train - arima_predictions_train)^2)) #RMSE
 print(data.frame(MAPE=mape_sarima,MSE=mse_sarima,RMSE=rmse_sarima)) #Medidas de Ajuste
 
@@ -274,20 +279,15 @@ arimax_test <- ts(base_proyecto_o[(split_factor+1):132,c(2:4,9)],frequency=12,st
 
 autoARIMAX <- auto.arima(arimax_train[,1],xreg = arimax_train[,c(3)], trace=TRUE)
 summary(autoARIMAX)
-#sarimax<- arima(arimax_train[,1],xreg = arimax_train[,2],order =  c(1,1,3),seasonal = list(order = c(0,0,2),period= 12)) #ARIMA 301
-#summary(sarimax)
-#check residuals
-checkresiduals(autoARIMAX)
 
-#arimax_predictions_train <- (arimax_train[,1]-autoARIMAX$residuals)
 arimax_predictions_train <- autoARIMAX$fitted
 arimax_predictions_list <- autoARIMAX %>%  forecast(xreg=arimax_test[,c(3)])
 arimax_predictions_test <- arimax_predictions_list$mean
 arimax_predictions <- append(arimax_predictions_train,arimax_predictions_test)
 
 base_proyecto_arimax <- data.frame(fecha=base_proyecto[,10],
-                                  credito_total=credito_total_n*sd[1]+media[1],
-                                  credito_total_pred=arimax_predictions) %>% 
+                                   credito_total=credito_total_n*sd[1]+media[1],
+                                   credito_total_pred=arimax_predictions) %>% 
   mutate(residuals=credito_total-credito_total_pred)
 
 # How the model fitted the data
@@ -307,15 +307,15 @@ Box.Ljung.Test(autoarimax_res, lag = 1) # H0:	The model does not exhibit lack of
 # Forecast Plot
 colors <- c("Valor Real" = "azure4", "Pronóstico" = "#69b3a2")
 ggplot(base_proyecto_arimax, aes(x = fecha))+
-  geom_line(aes(y = credito_total,color="Valor Real"))+
+  geom_line(aes(y = as.numeric(credito_total),color="Valor Real"))+
   geom_line(aes(y = credito_total_pred,color="Pronóstico"))+
   theme(axis.text.x=element_text(angle=60, hjust=1))+
   annotate("rect", xmin = as.Date("2021-03-01", "%Y-%m-%d"), 
            xmax = as.Date ("2021-09-01", "%Y-%m-%d"), ymin = -Inf, ymax = Inf,
            alpha = .1,fill = "red")+scale_x_date(date_breaks="1 year",date_labels ="%m-%Y")+
-  labs(y="N Busquedas",x="Fecha", color = "Serie")+
+  labs(y="Millones de $ (USD)",x="Fecha", color = "Serie")+
   scale_color_manual(values = colors)+
-  labs(caption = "SARIMA (1,1,3) (0,0,2) (12)")
+  labs(caption = "ARIMAX (1,1,3) (0,0,2) (12)")
 # Model Performance
 
 mape_sarimax <- mape((arimax_train[,1]-media[1])/sd[1],(arimax_predictions_train-media[1])/sd[1])  #MAPE Si existe sobreajuste se debe eliminar variables de acuerdo al MSE
@@ -337,11 +337,9 @@ ml_test <- base_proyecto[(split_factor+1):132,-10]
 
 #rf = randomForest(credito_total~year+google_q1+tasa_pasiva+google_q4+google_q2+precio_wti+ month, data = ml_train)
 rf = randomForest(credito_total~., data = ml_train,importance=TRUE)
-#print(rf)
 
 ImpData <- as.data.frame(importance(rf))
 ImpData$Var.Names <- row.names(ImpData)
-# Var Importance
 
 ggplot(ImpData, aes(x=Var.Names, y=`%IncMSE`)) +
   geom_segment( aes(x=Var.Names, xend=Var.Names, y=0, yend=`%IncMSE`), color="skyblue") +
@@ -355,7 +353,6 @@ ggplot(ImpData, aes(x=Var.Names, y=`%IncMSE`)) +
     axis.ticks.y = element_blank()
   )
 
-# Model Performance
 rf_predictions_train = predict(rf, newdata = ml_train)
 
 rf_predictions_test = predict(rf, newdata = ml_test)
@@ -365,11 +362,17 @@ base_proyecto_rf$credito_total_pred<-predictions_plot
 base_proyecto_rf$residuals <- (base_proyecto_rf$credito_total - base_proyecto_rf$credito_total_pred)
 
 # Forecast Plot
-ggplot(data=base_proyecto_rf)+geom_line(aes(fecha,credito_total*sd[1]+media[1]),col="#69b3a2")+
-  geom_line(aes(fecha,credito_total_pred*sd[1]+media[1]),col="gray")+theme(axis.text.x=element_text(angle=60, hjust=1))+
+colors <- c("Valor Real" = "azure4", "Pronóstico" = "#69b3a2")
+ggplot(base_proyecto_rf, aes(x = fecha))+
+  geom_line(aes(y = credito_total*sd[1]+media[1],color="Valor Real"))+
+  geom_line(aes(y = credito_total_pred*sd[1]+media[1],color="Pronóstico"))+
+  theme(axis.text.x=element_text(angle=60, hjust=1))+
   annotate("rect", xmin = as.Date("2021-03-01", "%Y-%m-%d"), 
            xmax = as.Date ("2021-09-01", "%Y-%m-%d"), ymin = -Inf, ymax = Inf,
-           alpha = .1,fill = "red")+scale_x_date(date_breaks="1 year",date_labels ="%m-%Y")+ylab("Credito Total")
+           alpha = .1,fill = "red")+scale_x_date(date_breaks="1 year",date_labels ="%m-%Y")+
+  labs(y="Millones de $ (USD)",x="Fecha", color = "Serie")+
+  scale_color_manual(values = colors)+
+  labs(caption = "Random Forest (RF)")
 # Forecast Performance
 rf_mape <- mape(ml_train$credito_total, rf_predictions_train)  #MAPE Si existe sobreajuste se debe eliminar variables de acuerdo al MSE
 rf_mse <- mean((ml_train$credito_total-rf_predictions_train)^2)  #MSE
@@ -391,34 +394,28 @@ xgb_train <- base_proyecto[1:split_factor,]
 train_targets <- xgb_train$credito_total  #Y train
 
 xgb_train[] <- sapply(xgb_train, as.numeric)
-xgb_train <- select(xgb_train,-c(1,10))
+xgb_train <- select(xgb_train,-c(1,14))
 
-xgb_test <- base_proyecto[(split_factor+1):132,]
+xgb_test <- base_proyecto[(split_factor+1):nrow(base_proyecto),]
 
 test_targets <- xgb_test$credito_total  #Y test
 
 xgb_test[] <- sapply(xgb_test, as.numeric)
-xgb_test <- select(xgb_test,-c(1,10))
-
-
-#Transform train and test data to DMatrix form
-# train_Dmatrix <- xgb_train %>% 
-#   dplyr::select(-c(1,10)) %>% mutate(year=as.numeric(year),month=as.numeric(month)) %>% 
-#   as.matrix() %>% 
-#   xgb.DMatrix()
-# 
-# pred_Dmatrix <- xgb_test %>% 
-#   dplyr::select(-c(1,10)) %>% mutate(year=as.numeric(year),month=as.numeric(month)) %>% 
-#   as.matrix() %>% 
-#   xgb.DMatrix()
+xgb_test <- select(xgb_test,-c(1,14))
 
 #Cross-validation
 xgb_trcontrol <- trainControl(
-  method = "cv", 
+  method = "cv",
   number = 3,
-  allowParallel = TRUE, 
+  allowParallel = TRUE,
   verboseIter = FALSE
 )
+# xgb_trcontrol <- trainControl(
+#   method = "timeslice",
+#   initialWindow = 24,
+#   fixedWindow = TRUE,
+#   horizon = 6,
+#   verboseIter = FALSE)
 
 #Building parameters set
 xgb_grid <- expand.grid(
@@ -434,42 +431,53 @@ xgb_grid <- expand.grid(
 #Building the model
 model_xgb <- train(x = xgb_train,
                    y = train_targets,
-  trControl = xgb_trcontrol,
-  tuneGrid = xgb_grid,
-  method = "xgbTree",
-  verbose = TRUE)
-
+                   trControl = xgb_trcontrol,
+                   tuneGrid = xgb_grid,
+                   method = "xgbTree",
+                   verbose = TRUE)
 model_xgb
 
-predict(model_xgb, xgb_test)
-xgb_predictions_test <- predict(model_xgb, xgb_test)
+xgb_imp <- xgb.importance(
+  feature_names = colnames(xgb_train),
+  model = model_xgb$finalModel)
 
+xgb.ggplot.importance(xgb_imp,n_clusters = c(2))+ 
+  ggtitle("Importancia de variables explicativas") +
+  theme_bw()+
+  theme(legend.position="none")
+
+xgb_predictions_test <- predict(model_xgb, xgb_test)
 # Creating variables for model Performance 
 xgb_predictions_train <- predict(model_xgb)
 xgb_predictions <- append(xgb_predictions_train,xgb_predictions_test)
 
-base_proyecto_xgb <- data.frame(fecha=base_proyecto[,10],
-                                  credito_total=as.numeric(credito_total_n),
-                                  credito_total_pred=xgb_predictions) %>% 
+base_proyecto_xgb <- data.frame(fecha=base_proyecto[,14],
+                                credito_total=as.numeric(credito_total_n),
+                                credito_total_pred=xgb_predictions) %>% 
   mutate(residuals=credito_total-credito_total_pred)
-
 # Forecast Plot
-ggplot(data=base_proyecto_xgb)+geom_line(aes(fecha,(credito_total*sd[1]+media[1])),col="green")+
-  geom_line(aes(fecha,credito_total_pred*sd[1]+media[1]),col="gray")+theme(axis.text.x=element_text(angle=60, hjust=1))+
+colors <- c("Valor Real" = "azure4", "Pronóstico" = "#69b3a2")
+ggplot(base_proyecto_xgb, aes(x = fecha))+
+  geom_line(aes(y = credito_total*sd[1]+media[1],color="Valor Real"))+
+  geom_line(aes(y = credito_total_pred*sd[1]+media[1],color="Pronóstico"))+
+  theme(axis.text.x=element_text(angle=60, hjust=1))+
   annotate("rect", xmin = as.Date("2021-03-01", "%Y-%m-%d"), 
            xmax = as.Date ("2021-09-01", "%Y-%m-%d"), ymin = -Inf, ymax = Inf,
-           alpha = .1,fill = "red")+scale_x_date(date_breaks="1 year",date_labels ="%m-%Y")+ylab("Credito Total")
+           alpha = .1,fill = "red")+scale_x_date(date_breaks="1 year",date_labels ="%m-%Y")+
+  labs(y="Millones de $ (USD)",x="Fecha", color = "Serie")+
+  scale_color_manual(values = colors)+
+  labs(caption = "Random Forest (RF)")
 
 # Model performance
-xgb_mape = MAPE(xgb_predictions_train,train_targets)*100
-xgb_mse = mean((train_targets- xgb_predictions_train)^2)
-xgb_rmse = RMSE(xgb_predictions_train,train_targets)
+# xgb_mape = MAPE(xgb_predictions_train,train_targets)*100
+# xgb_mse = mean((train_targets- xgb_predictions_train)^2)
+# xgb_rmse = RMSE(xgb_predictions_train,train_targets)
+# 
+# print(data.frame(MAPE=xgb_mape,MSE=xgb_mse,RMSE=xgb_rmse))
 
-print(data.frame(MAPE=xgb_mape,MSE=xgb_mse,RMSE=xgb_rmse))
-
-xgb_mape = MAPE(xgb_predictions_test,test_targets)*100
-xgb_mse = mean((test_targets- xgb_predictions_test)^2)
-xgb_rmse = RMSE(xgb_predictions_test,test_targets)
+xgb_mape = MAPE((xgb_predictions_test*sd[1]+media[1]),(test_targets*sd[1]+media[1]))*100
+xgb_mse = mean(((test_targets*sd[1]+media[1])- (xgb_predictions_test*sd[1]+media[1]))^2)
+xgb_rmse = RMSE(xgb_predictions_test*sd[1]+media[1],test_targets*sd[1]+media[1])
 
 print(data.frame(MAPE=xgb_mape,MSE=xgb_mse,RMSE=xgb_rmse))
 
@@ -490,19 +498,23 @@ base_proyecto_comparacion <- base_proyecto[,c(10,1)]
 base_proyecto_comparacion$pred_sarima <- base_proyecto_arima$credito_total_pred
 base_proyecto_comparacion$pred_rf <- base_proyecto_rf$credito_total_pred
 base_proyecto_comparacion$pred_xgb <- base_proyecto_xgb$credito_total_pred
+base_proyecto_comparacion$pred_arimax <- base_proyecto_arimax$credito_total_pred
 
-colors <- c("Valor Actual" = "black", "Sarima" = "green", "Random Forest" = "orange","XGBoost"="blue")
+colors <- c("Valor Actual" = "black", "Sarima" = "green", "Random Forest" = "brown1","XGBoost"="blue", "Arimax"="chocolate4")
 ggplot(base_proyecto_comparacion, aes(x = fecha))+
-  geom_line(aes(y = credito_total*sd[1]+media[1],color="Valor Actual"))+
-  geom_line(aes(y = pred_sarima*sd[1]+media[1],color="Sarima"),alpha=0.4)+
-  geom_line(aes(y = pred_rf*sd[1]+media[1],color="Random Forest"),alpha=0.4)+
-  geom_line(aes(y = pred_xgb*sd[1]+media[1],color="XGBoost"),alpha=0.4)+
-  theme(axis.text.x=element_text(angle=60, hjust=1))+
   annotate("rect", xmin = as.Date("2021-03-01", "%Y-%m-%d"), 
-           xmax = as.Date ("2021-09-01", "%Y-%m-%d"), ymin = -Inf, ymax = Inf,
-           alpha = .1,fill = "blue")+scale_x_date(date_breaks="1 year",date_labels ="%m-%Y")+
-            labs(y="Credito total (Millones USD)",x="Fecha", color = "Legend")+
-            scale_color_manual(values = colors)
+           xmax = as.Date ("2021-10-01", "%Y-%m-%d"), ymin = -Inf, ymax = Inf,
+           alpha = .1,fill = "red")+
+  geom_line(aes(y = credito_total*sd[1]+media[1],color="Valor Actual"),alpha=0.7)+
+  geom_line(aes(y = pred_sarima*sd[1]+media[1],color="Sarima"),alpha=0.5)+
+  geom_line(aes(y = pred_rf*sd[1]+media[1],color="Random Forest"),alpha=0.5)+
+  geom_line(aes(y = pred_xgb*sd[1]+media[1],color="XGBoost"),alpha=0.5)+
+  geom_line(aes(y = pred_arimax,color="Arimax"),alpha=0.5)+
+  theme(axis.text.x=element_text(angle=60, hjust=1))+
+  coord_cartesian(xlim=as.Date(c("2019-01-01","2021-10-01")))+scale_x_date(date_breaks="3 months",
+                                                                           date_labels ="%m-%Y")+
+  labs(title = "Comparación de Modelos",y="Credito total en Millones de $ (USD)",x="Fecha", color = "Modelo")+
+  scale_color_manual(values = colors)
 
 #names <- c("Modelo","MAPE","MSE","RMSE")
 modelo <- c("ARIMA","ARIMAX","RANDOM FOREST","XGBOOST")

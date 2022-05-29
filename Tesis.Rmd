@@ -154,6 +154,7 @@ base_proyecto_s <- as.data.frame(base_proyecto_s)
 base_proyecto <- base_proyecto_s %>% mutate(fecha=ymd(base_proyecto$fecha))
 split_factor <- floor((nrow(base_proyecto)/20)*19)         #define % of training and test set
 ts_base_proyecto <- ts(base_proyecto[,-10], frequency = 12, start = c(2010,10))
+credito_total_n <- ts_base_proyecto[,1]
 ```
 
 
