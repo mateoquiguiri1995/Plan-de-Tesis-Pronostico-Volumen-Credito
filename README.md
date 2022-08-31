@@ -1,2 +1,2 @@
 # Thesis-project-credit-demand-forecast
- Proyecto de titulación - Pronóstico de la Demanda de crédito quirografário del BIESS
+ Plan de Proyecto de titulación - Contraste de técnicas econométricas y Machine Learning en el pronóstico del volumen de crédito de los hogares en Ecuador.
