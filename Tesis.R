@@ -38,17 +38,21 @@ mape <- function(actual,pred){
 
 # Data Import and Cleaning ------------------------------------------------
 
-base_proyecto <- read_excel("base_proyecto.xlsx",sheet = "Hoja2") %>% 
-  rename(fecha = Mes) %>% 
+base_proyecto <- read_excel("base_proyecto.xlsx",sheet = "Hipotecario") %>% 
+  rename(fecha = Month) %>% 
   clean_names()
 
 # Data Transformation -----------------------------------------------
-base_proyecto <- base_proyecto%>% 
-  mutate(fecha=ymd(fecha),credito_total=credito_total/1000000) %>% 
-  select(-c(n_operaciones,credito_total_miles)) 
+base_proyecto <- base_proyecto %>% 
+  select(1,4,7:18) %>% 
+  mutate(fecha = ymd(fecha),credito_total=inmobiliario) %>% 
+  filter(fecha >= "2012-01-01")
+  
+base_proyecto <- base_proyecto[1:nrow(base_proyecto)-1,]
+  #select(-c(n_operaciones,credito_total_miles)) 
 # * Imputacion CART----
-base_proyecto_imp <- mice(base_proyecto, m=3, maxit = 50, method = 'cart', seed = 500)
-base_proyecto <- complete(base_proyecto_imp,1)
+#base_proyecto_imp <- mice(base_proyecto, m=3, maxit = 50, method = 'cart', seed = 500)
+#base_proyecto <- complete(base_proyecto_imp,1)
 # Serie para modelo SARIMA
 credito_total <- ts(base_proyecto$credito_total, frequency = 12, start = c(2010,10))
 # Base original para ARIMAX
@@ -66,7 +70,7 @@ sd <- attr(base_proyecto_s,'scaled:scale')
 media <- attr(base_proyecto_s,'scaled:center')
 base_proyecto_s <- as.data.frame(base_proyecto_s)
 base_proyecto <- base_proyecto_s %>% mutate(fecha=ymd(base_proyecto$fecha))
-split_factor <- floor((nrow(base_proyecto)/20)*19)         #define % of training and test set
+#split_factor <- floor((nrow(base_proyecto)/20)*19)         #define % of training and test set
 ts_base_proyecto <- ts(base_proyecto[,-10], frequency = 12, start = c(2010,10))
 credito_total_n <- ts_base_proyecto[,1]
 # Descriptive Statistics --------------------------------------------------
@@ -86,7 +90,7 @@ ggplot(base_proyecto_o, aes(x=fecha, y=credito_total)) +
   geom_line( color="#69b3a2") +
   #theme_ipsum() +
   theme(axis.text.x = element_text(angle = 60, hjust=1))+
-  labs(title = "Colocacion Credito Credito Quirografario BIESS ",
+  labs(title = "Colocacion Credito Credito Hipotecario",
        subtitle = "De Oct 2010 a Sep 2021",x="Fecha",y="Millones de $ (USD)",
        caption = "Fuente: BIESS")+
   scale_x_date(date_breaks="1 year",date_labels ="%m-%Y")
@@ -389,6 +393,7 @@ print(data.frame(MAPE=rf_mape,MSE=rf_mse,RMSE=rf_rmse))
 # XG Boost Model----------------------------------------------------------
 #Splitting train and test data set
 
+split_factor = 119
 xgb_train <- base_proyecto[1:split_factor,]
 
 train_targets <- xgb_train$credito_total  #Y train
@@ -451,7 +456,7 @@ xgb_predictions_test <- predict(model_xgb, xgb_test)
 xgb_predictions_train <- predict(model_xgb)
 xgb_predictions <- append(xgb_predictions_train,xgb_predictions_test)
 
-base_proyecto_xgb <- data.frame(fecha=base_proyecto[,14],
+base_proyecto_xgb <- data.frame(fecha=base_proyecto[,15],
                                 credito_total=as.numeric(credito_total_n),
                                 credito_total_pred=xgb_predictions) %>% 
   mutate(residuals=credito_total-credito_total_pred)
@@ -461,8 +466,8 @@ ggplot(base_proyecto_xgb, aes(x = fecha))+
   geom_line(aes(y = credito_total*sd[1]+media[1],color="Valor Real"))+
   geom_line(aes(y = credito_total_pred*sd[1]+media[1],color="Pronóstico"))+
   theme(axis.text.x=element_text(angle=60, hjust=1))+
-  annotate("rect", xmin = as.Date("2021-03-01", "%Y-%m-%d"), 
-           xmax = as.Date ("2021-09-01", "%Y-%m-%d"), ymin = -Inf, ymax = Inf,
+  annotate("rect", xmin = as.Date("2021-12-01", "%Y-%m-%d"), 
+           xmax = as.Date ("2022-03-01", "%Y-%m-%d"), ymin = -Inf, ymax = Inf,
            alpha = .1,fill = "red")+scale_x_date(date_breaks="1 year",date_labels ="%m-%Y")+
   labs(y="Millones de $ (USD)",x="Fecha", color = "Serie")+
   scale_color_manual(values = colors)+
