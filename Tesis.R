@@ -49,7 +49,7 @@ base_proyecto <- base_proyecto %>%
   filter(fecha >= "2012-01-01")
   
 base_proyecto <- base_proyecto[1:nrow(base_proyecto)-1,]
-  #select(-c(n_operaciones,credito_total_miles)) 
+  
 # * Imputacion CART----
 #base_proyecto_imp <- mice(base_proyecto, m=3, maxit = 50, method = 'cart', seed = 500)
 #base_proyecto <- complete(base_proyecto_imp,1)
