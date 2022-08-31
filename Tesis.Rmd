@@ -24,7 +24,6 @@ library(readxl)#Tidy
 library(janitor) #clean_names
 library(lubridate) # time data
 library(hrbrthemes) # color extra 'ggplot2' themes
-#library(skimr) # Summary
 library(readxl)
 library(gridExtra) #grid plots
 library(grid) # plots
